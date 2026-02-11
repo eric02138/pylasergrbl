@@ -1,0 +1,5 @@
+tar xzf pylasergrbl.tar.gz
+cd pylasergrbl
+pip install pyserial Pillow numpy
+python main.py                          # GUI mode
+python main.py --headless --port /dev/ttyUSB0 --image photo.jpg --width 50  # Headless

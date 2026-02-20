@@ -444,6 +444,7 @@ class MainWindow:
     def _send_manual(self, event=None):
         cmd = self._manual_entry.get().strip()
         if cmd and self.grbl.is_connected:
+            logger.info(f">>> {cmd}")
             self._log("tx", f">>> {cmd}")
             self.grbl.send_command(cmd)
             self._manual_entry.delete(0, "end")

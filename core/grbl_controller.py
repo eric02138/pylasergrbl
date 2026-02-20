@@ -115,6 +115,7 @@ class GrblController:
     """
 
     RX_BUFFER_SIZE = 128  # GRBL default receive buffer size
+    CONNECTION_TIMEOUT = 5
 
     def __init__(self):
         self._port: Optional[serial.Serial] = None
@@ -197,7 +198,7 @@ class GrblController:
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
-    def connect(self, port: str, baud: int = 115200, hard_reset: bool = True):
+    def connect(self, port: str, baud: int = 115200):
         """Open serial connection to GRBL controller."""
         if self.is_connected:
             self.disconnect()
@@ -210,21 +211,12 @@ class GrblController:
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=0.1,
+                timeout=self.CONNECTION_TIMEOUT,
                 write_timeout=5,
             )
 
-            if hard_reset:
-                # Toggle DTR to reset Arduino (like LaserGRBL does)
-                self._port.dtr = False
-                time.sleep(0.05)
-                self._port.dtr = True
-                time.sleep(0.05)
-                self._port.dtr = False
-
-            # Flush buffers
-            time.sleep(1.5)  # Wait for GRBL to boot
-            self._port.reset_input_buffer()
+            # Flush buffer
+            time.sleep(2.0)  # Wait for GRBL to boot
             self._port.reset_output_buffer()
 
             self._alive = True
@@ -241,8 +233,19 @@ class GrblController:
                 if self.on_connected:
                     self.on_connected()
             else:
-                logger.warning("No GRBL welcome message received")
-                self.status = MachineStatus.UNKNOWN
+                # No welcome message — board was already running.
+                # Send a status query and give the RX thread time to process it.
+                logger.info("No welcome message — querying status directly")
+                self._send_realtime(b"?")
+                time.sleep(2)
+                
+                if self._status != MachineStatus.CONNECTING:
+                    # RX thread parsed a status report and updated the state
+                    logger.info(f"Connected via status query: {self._status.name}")
+                else:
+                    logger.warning("No GRBL welcome message or status response received")
+                    self.status = MachineStatus.UNKNOWN
+                
                 if self.on_connected:
                     self.on_connected()
 
@@ -292,11 +295,15 @@ class GrblController:
     # ------------------------------------------------------------------
     def _rx_loop(self):
         """Continuously read lines from GRBL and process responses."""
+        logger.info("RX thread started")
         while self._alive and self.is_connected:
             try:
-                line = self._port.readline().decode("ascii", errors="replace").strip()
+                raw = self._port.readline()
+                #logger.info(f"RX raw bytes: {repr(raw)}")
+                line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
+                #logger.info(f"RX line: {line}")
                 self._process_response(line)
             except serial.SerialException:
                 if self._alive:
@@ -306,6 +313,7 @@ class GrblController:
                 break
             except Exception as e:
                 logger.debug(f"RX error: {e}")
+        logger.info("RX thread exiting")
 
     def _process_response(self, line: str):
         """Process a single line received from GRBL."""
@@ -456,15 +464,19 @@ class GrblController:
 
     def send_command(self, cmd_str: str):
         """Send a single G-code command (blocking until ack)."""
+        logger.info("in send_command")
         if not self.is_connected:
+            logger.error("Not Connected")
             return
         cmd_str = cmd_str.strip()
         if not cmd_str:
+            logger.error("No cmd_str")
             return
-        data = (cmd_str + "\n").encode("ascii")
+        data = (cmd_str + "\n").encode("utf-8")
+        logger.info(f"data: {data}")
         try:
             self._port.write(data)
-            logger.debug(f"TX: {cmd_str}")
+            logger.info(f"TX: {cmd_str}")
         except serial.SerialException as e:
             logger.error(f"Send error: {e}")
 

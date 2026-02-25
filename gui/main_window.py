@@ -260,10 +260,10 @@ class MainWindow:
         ttk.Combobox(row, textvariable=scan_var, values=["HORIZONTAL","VERTICAL","DIAGONAL"],
                       width=14, state="readonly").pack(side="left")
 
-        mode_var = tk.StringVar(value="LINE_TO_LINE")
+        mode_var = tk.StringVar(value="DITHERING")
         row = ttk.Frame(fr); row.pack(fill="x", pady=2)
         ttk.Label(row, text="Conversion Mode", width=25, anchor="w").pack(side="left")
-        ttk.Combobox(row, textvariable=mode_var, values=["LINE_TO_LINE","DITHERING"],
+        ttk.Combobox(row, textvariable=mode_var, values=["DITHERING", "LINE_TO_LINE"],
                       width=14, state="readonly").pack(side="left")
 
         dither_var = tk.StringVar(value="FLOYD_STEINBERG")
@@ -325,7 +325,6 @@ class MainWindow:
         """Show SVG conversion settings dialog with live SVG info."""
         # Get SVG info for display
         info = get_svg_info(svg_path)
-
         dlg = tk.Toplevel(self.root)
         dlg.title("SVG to G-code Settings")
         dlg.geometry("450x620")
@@ -450,7 +449,9 @@ class MainWindow:
                     flip_y=flip_var.get(),
                     optimize_paths=optimize_var.get(),
                 )
+                logger.info(settings)
                 lines = svg_to_gcode(svg_path, settings=settings)
+                logger.info(lines)
                 gf = GCodeFile.from_lines(lines, filename=svg_path)
                 self.preview.set_file(gf)
                 self._log("info", f"SVG preview: {gf.total} commands")

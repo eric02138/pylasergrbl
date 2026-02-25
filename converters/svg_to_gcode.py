@@ -13,11 +13,15 @@ Also includes a pure-Python fallback parser for simple SVGs when
 svgpathtools is not installed.
 """
 
+import logging
 import math
 import re
 import xml.etree.ElementTree as ET
+import logging
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from svgpathtools import (
@@ -161,11 +165,39 @@ def svg_to_gcode(
 # ---------------------------------------------------------------------------
 
 def _parse_svg(svg_path: str, bezier_res: int) -> List[List[Tuple[float, float]]]:
-    """Parse SVG and return a list of polyline paths (each is a list of (x,y) points)."""
+    """Parse SVG and return a list of polyline paths (each is a list of (x,y) points).
+
+    Uses svgpathtools for <path> elements if available, and always uses
+    the fallback parser for basic shapes (<rect>, <circle>, <ellipse>,
+    <line>, <polyline>, <polygon>) since svgpathtools ignores those.
+    """
+    # DEBUG — remove later
+    # print(f"DEBUG _parse_svg called with: {svg_path}")
+    # print(f"DEBUG HAS_SVGPATHTOOLS: {HAS_SVGPATHTOOLS}")
+    # for local, elem in _iter_svg_elements(svg_path):
+    #     print(f"DEBUG found element: <{local}> attribs={dict(elem.attrib)}")
+
+
+    path_results = []
+    shape_results = []
+
+    # Parse <path> elements
     if HAS_SVGPATHTOOLS:
-        return _parse_with_svgpathtools(svg_path, bezier_res)
-    else:
-        return _parse_fallback(svg_path, bezier_res)
+        try:
+            path_results = _parse_with_svgpathtools(svg_path, bezier_res)
+        except Exception as e:
+            # If svgpathtools fails, fall through to fallback for paths too
+            logging.getLogger(__name__).warning(f"svgpathtools failed: {e}, using fallback")
+            return _parse_fallback(svg_path, bezier_res)
+
+    # Always parse basic shapes with fallback (svgpathtools skips them)
+    shape_results = _parse_fallback_shapes_only(svg_path, bezier_res)
+
+    # If svgpathtools wasn't available, use fallback for paths too
+    if not HAS_SVGPATHTOOLS:
+        path_results = _parse_fallback_paths_only(svg_path, bezier_res)
+
+    return path_results + shape_results
 
 
 def _parse_with_svgpathtools(svg_path: str, bezier_res: int) -> List[List[Tuple[float, float]]]:
@@ -216,30 +248,36 @@ def _parse_fallback(svg_path: str, bezier_res: int) -> List[List[Tuple[float, fl
 
     Supports: <path>, <line>, <polyline>, <polygon>, <rect>, <circle>, <ellipse>
     """
+    return _parse_fallback_paths_only(svg_path, bezier_res) + \
+           _parse_fallback_shapes_only(svg_path, bezier_res)
+
+
+def _iter_svg_elements(svg_path: str):
+    """Yield (local_tag, element) for all elements in an SVG file."""
     tree = ET.parse(svg_path)
     root = tree.getroot()
-
-    # Handle SVG namespace
-    ns = ""
-    m = re.match(r"\{(.+?)\}", root.tag)
-    if m:
-        ns = m.group(1)
-
-    def tag(name):
-        return f"{{{ns}}}{name}" if ns else name
-
-    result = []
-
-    # Find all shape elements recursively
     for elem in root.iter():
         local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        yield local, elem
 
+
+def _parse_fallback_paths_only(svg_path: str, bezier_res: int) -> List[List[Tuple[float, float]]]:
+    """Parse only <path> elements using the fallback parser."""
+    result = []
+    for local, elem in _iter_svg_elements(svg_path):
         if local == "path":
             d = elem.get("d", "")
-            paths = _parse_svg_d(d, bezier_res)
-            result.extend(paths)
+            if d.strip():
+                paths = _parse_svg_d(d, bezier_res)
+                result.extend(paths)
+    return result
 
-        elif local == "line":
+
+def _parse_fallback_shapes_only(svg_path: str, bezier_res: int) -> List[List[Tuple[float, float]]]:
+    """Parse only basic shape elements: <line>, <polyline>, <polygon>, <rect>, <circle>, <ellipse>."""
+    result = []
+    for local, elem in _iter_svg_elements(svg_path):
+        if local == "line":
             x1 = float(elem.get("x1", 0))
             y1 = float(elem.get("y1", 0))
             x2 = float(elem.get("x2", 0))
@@ -254,7 +292,7 @@ def _parse_fallback(svg_path: str, bezier_res: int) -> List[List[Tuple[float, fl
         elif local == "polygon":
             pts = _parse_points(elem.get("points", ""))
             if len(pts) >= 2:
-                pts.append(pts[0])  # Close polygon
+                pts.append(pts[0])
                 result.append(pts)
 
         elif local == "rect":
@@ -291,7 +329,6 @@ def _parse_fallback(svg_path: str, bezier_res: int) -> List[List[Tuple[float, fl
                 result.append(pts)
 
     return result
-
 
 def _parse_points(s: str) -> List[Tuple[float, float]]:
     """Parse SVG points attribute: '10,20 30,40 50,60'"""
@@ -611,8 +648,10 @@ def _dist(a: Tuple[float, float], b: Tuple[float, float]) -> float:
 def get_svg_info(svg_path: str) -> dict:
     """Return basic info about an SVG file (dimensions, path count) for the UI."""
     try:
+        logger.info(f"svg_path: {svg_path}")
         tree = ET.parse(svg_path)
         root = tree.getroot()
+        logger.error(f"root: {root}")
 
         width = root.get("width", "")
         height = root.get("height", "")

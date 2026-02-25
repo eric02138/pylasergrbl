@@ -5,9 +5,10 @@ A Python port of LaserGRBL (https://github.com/arkypita/LaserGRBL)
 designed to run on Raspberry Pi and Linux systems.
 
 Usage:
-    python main.py              # Launch GUI
-    python main.py --headless   # Headless mode (stream a file)
-    python main.py --help
+    python main.py                       # Launch GUI
+    python main.py --headless --file job.gcode --port /dev/ttyUSB0
+    python main.py --headless --image photo.jpg --width 50
+    python main.py --headless --svg logo.svg --width 80 --passes 2
 """
 
 import sys
@@ -25,22 +26,29 @@ def main():
     parser.add_argument("--baud", type=int, default=115200,
                         help="Baud rate (default: 115200)")
     parser.add_argument("--file", type=str, default="",
-                        help="G-code file to stream (headless mode)")
+                        help="G-code file to stream")
     parser.add_argument("--image", type=str, default="",
-                        help="Image file to convert and stream (headless mode)")
+                        help="Raster image file to convert and stream")
+    parser.add_argument("--svg", type=str, default="",
+                        help="SVG file to convert and stream")
     parser.add_argument("--width", type=float, default=50,
-                        help="Image width in mm (default: 50)")
+                        help="Target width in mm (default: 50)")
+    parser.add_argument("--height", type=float, default=0,
+                        help="Target height in mm (0 = proportional)")
     parser.add_argument("--power", type=int, default=1000,
                         help="Max laser power S value (default: 1000)")
     parser.add_argument("--feed", type=float, default=1000,
-                        help="Feed rate mm/min (default: 1000)")
+                        help="Cutting feed rate mm/min (default: 1000)")
+    parser.add_argument("--travel-speed", type=float, default=3000,
+                        help="Travel speed mm/min for SVG (default: 3000)")
+    parser.add_argument("--passes", type=int, default=1,
+                        help="Number of passes for SVG cutting (default: 1)")
     parser.add_argument("--dpi", type=float, default=254,
                         help="Image resolution DPI (default: 254)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable verbose logging")
     args = parser.parse_args()
 
-    # Setup logging
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=level,
@@ -65,10 +73,8 @@ def run_headless(args):
     """Run in headless mode — stream a file without GUI."""
     from core.grbl_controller import GrblController
     from core.gcode_parser import GCodeFile
-    from converters.image_to_gcode import image_to_gcode
 
     if not args.port:
-        # Try to auto-detect
         from utils.serial_utils import list_serial_ports
         ports = list_serial_ports()
         if ports:
@@ -78,12 +84,27 @@ def run_headless(args):
             print("Error: No serial port found. Specify with --port")
             sys.exit(1)
 
-    if not args.file and not args.image:
-        print("Error: Specify --file or --image for headless mode")
+    if not args.file and not args.image and not args.svg:
+        print("Error: Specify --file, --image, or --svg for headless mode")
         sys.exit(1)
 
-    # Prepare G-code
-    if args.image:
+    # Prepare G-code from the appropriate source
+    if args.svg:
+        from converters.svg_to_gcode import svg_to_gcode, SvgConvertSettings
+        print(f"Converting SVG: {args.svg}")
+        settings = SvgConvertSettings(
+            feed_rate=args.feed,
+            travel_speed=args.travel_speed,
+            power=args.power,
+            num_passes=args.passes,
+            target_width_mm=args.width,
+            target_height_mm=args.height if args.height > 0 else 0,
+        )
+        lines = svg_to_gcode(args.svg, settings=settings)
+        gcode_file = GCodeFile.from_lines(lines, filename=args.svg)
+
+    elif args.image:
+        from converters.image_to_gcode import image_to_gcode
         print(f"Converting image: {args.image}")
         lines = image_to_gcode(
             image_path=args.image,
@@ -91,8 +112,10 @@ def run_headless(args):
             feed_rate=args.feed,
             max_power=args.power,
             width_mm=args.width,
+            height_mm=args.height if args.height > 0 else None,
         )
         gcode_file = GCodeFile.from_lines(lines, filename=args.image)
+
     else:
         gcode_file = GCodeFile.from_file(args.file)
 
@@ -100,14 +123,14 @@ def run_headless(args):
 
     # Connect and stream
     grbl = GrblController()
-
     finished = False
 
     def on_progress(pct):
         bar_len = 40
         filled = int(bar_len * pct / 100)
         bar = "=" * filled + "-" * (bar_len - filled)
-        print(f"\r[{bar}] {pct:.1f}%  ({gcode_file.ok_count}/{gcode_file.total})", end="", flush=True)
+        print(f"\r[{bar}] {pct:.1f}%  ({gcode_file.ok_count}/{gcode_file.total})",
+              end="", flush=True)
 
     def on_finished():
         nonlocal finished
@@ -135,7 +158,6 @@ def run_headless(args):
     print("Starting stream...")
     grbl.start_stream()
 
-    # Wait for completion
     try:
         while not finished:
             time.sleep(0.5)

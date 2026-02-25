@@ -29,8 +29,8 @@ class DitherMethod(Enum):
 
 
 class ConversionMode(Enum):
-    LINE_TO_LINE = auto()   # Grayscale line scanning with S power modulation
     DITHERING = auto()      # 1-bit dithering
+    LINE_TO_LINE = auto()   # Grayscale line scanning with S power modulation
 
 
 # 4x4 Bayer ordered dither matrix
@@ -44,7 +44,7 @@ BAYER_4X4 = np.array([
 
 def image_to_gcode(
     image_path: str,
-    resolution_dpi: float = 254,       # ~0.1mm per pixel
+    resolution_dpi: float = 50,       # ~0.1mm per pixel
     feed_rate: float = 1000,           # mm/min
     max_power: int = 1000,             # S value for full black
     min_power: int = 0,                # S value for full white
@@ -65,7 +65,16 @@ def image_to_gcode(
     Returns a list of G-code strings ready to be streamed.
     """
     # Load and preprocess image
-    img = Image.open(image_path).convert("L")  # Grayscale
+    #img = Image.open(image_path).convert("L")  # Grayscale
+
+    img = Image.open(image_path)
+    if img.mode in ("RGBA", "LA", "PA"):
+        # Composite transparent areas onto white background
+        background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask
+        img = background.convert("L")
+    else:
+        img = img.convert("L")
 
     if invert:
         img = ImageOps.invert(img)
@@ -84,19 +93,21 @@ def image_to_gcode(
     if width_mm and height_mm:
         new_w = int(width_mm / pixel_mm)
         new_h = int(height_mm / pixel_mm)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((new_w, new_h), Image.NEAREST)
     elif width_mm:
         new_w = int(width_mm / pixel_mm)
         ratio = new_w / img.width
         new_h = int(img.height * ratio)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((new_w, new_h), Image.NEAREST)
     elif height_mm:
         new_h = int(height_mm / pixel_mm)
         ratio = new_h / img.height
         new_w = int(img.width * ratio)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((new_w, new_h), Image.NEAREST)
 
     pixels = np.array(img, dtype=np.float32)
+
+    pixels = np.flipud(pixels)
 
     # Apply dithering if needed
     if conversion_mode == ConversionMode.DITHERING:
@@ -196,6 +207,8 @@ def _pixel_to_power(pixel_val: float, max_power: int, min_power: int) -> int:
     """Convert a grayscale pixel (0=black, 255=white) to laser power.
     Black = high power, White = low power (inverted).
     """
+    if pixel_val > 245:
+        return 0  # Treat near-white as white (no burn)
     # 0 (black) → max_power, 255 (white) → min_power
     ratio = 1.0 - (pixel_val / 255.0)
     return int(min_power + ratio * (max_power - min_power))

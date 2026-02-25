@@ -166,7 +166,14 @@ class GCodeFile:
 
             if cmd.is_movement:
                 power = cmd.get_param("S")
-                is_cutting = laser_on or (power is not None and power > 0)
+                # G0 is never cutting; G1 is cutting only if laser is on with power > 0
+                is_rapid = s.startswith("G0 ") or s.startswith("G0X") or s == "G0"
+                if is_rapid:
+                    is_cutting = False
+                elif power is not None:
+                    is_cutting = power > 200
+                else:
+                    is_cutting = laser_on
                 points.append((x, y, is_cutting))
 
         return points

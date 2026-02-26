@@ -114,7 +114,8 @@ class GrblController:
     - Real-time command injection ($H, $X, ~, !, etc.)
     """
 
-    RX_BUFFER_SIZE = 128  # GRBL default receive buffer size
+    #RX_BUFFER_SIZE = 128  # GRBL default receive buffer size
+    RX_BUFFER_SIZE = 96  # GRBL default receive buffer size
     CONNECTION_TIMEOUT = 5
 
     def __init__(self):
@@ -639,7 +640,7 @@ class GrblController:
 
         # Wait for all remaining acks
         if not self._abort_flag:
-            deadline = time.time() + 30
+            deadline = time.time() + 120
             while self._buffer_fill and time.time() < deadline:
                 time.sleep(0.1)
 

@@ -37,8 +37,8 @@ class MainWindow:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("PyLaserGRBL — Laser Engraver Control")
-        self.root.geometry("1100x750")
-        self.root.minsize(800, 500)
+        self.root.geometry("1400x750")
+        self.root.minsize(1100, 500)
         style = ttk.Style()
         style.theme_use("clam")
 
@@ -51,7 +51,7 @@ class MainWindow:
         self._position_text = tk.StringVar(value="X: 0.000  Y: 0.000  Z: 0.000")
         self._progress_var = tk.DoubleVar(value=0)
         self._progress_text = tk.StringVar(value="0 / 0")
-        self._threading_mode = tk.StringVar(value="Fast")
+        self._threading_mode = tk.StringVar(value="Slow")
         self._loaded_file = None
 
         self._build_ui()
@@ -248,7 +248,7 @@ class MainWindow:
             entries[key] = v
 
         add("Resolution (DPI)", "resolution", 254)
-        add("Width (mm, 0=auto)", "width", 50)
+        add("Width (mm, 0=auto)", "width", 0)
         add("Height (mm, 0=auto)", "height", 0)
         add("Feed Rate (mm/min)", "feed", 1000)
         add("Max Power (S)", "max_power", 1000)
